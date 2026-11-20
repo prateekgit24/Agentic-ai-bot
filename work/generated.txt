@@ -1,0 +1,267 @@
+Add history loading on page load Add modern ChatGPT-style UI Chat Sessions (sidebar, multiple conversations)
+ Smart file-type detection (.py, .html, .json auto) 
+ 4️⃣ System prompt customization (build my own assistant anya and her personality) 
+ 5️⃣ Turn this into deployable SaaS architecture (including Factory/Adapter pattern for scalable multi-model routing)
+Sidebar conversation list
+
+Message timestamps
+also use RAG and i also want u to use tools like my clock website or its api to set alarm or timers
+wake word anya audo input and audio response
+authentication in website
+using my website tools and other tools for some tasks like playing song and start a timer
+creating a personality using prompt as a friend assistant anya
+learning from past chat
+auto detect what user   is asking simple question generate a file or do a task and accordingly responding
+so set unit converter, news feed and enhanced file manager in phase 4 
+multi model multi prompt
+admin and account
+camera and photo
+self goals
+ui proper    wakeword problem     files arrange separarte and arrange files
+ui update
+thinking webdev code preview
+add image tools
+uvicorn main:app --reload --port 8000
+comfyui
+automatic 11 11
+fooocus web UI
+civit ai -> image generator checkpoint
+github domain
+d78Uea51tw6ljIDak+kgWMjVd3Qcfb4qcN7OUwpZ9Rq9PEr8WK22Aw==
+but our all website features  will be designed for default prompt consideration 
+multimodaltask distribution system
+Generation: Using dall-e or a local model to draw images based on your prompts.
+Vision: Using a multimodal model (like llama3.2-vision or the Gemini API) to let you upload images so Anya can look at them and answer questions about them.
+Manipulation: Using Python (Pillow) to let Anya crop, resize, or apply filters to local images.
+voice update admin control multi ai
+python main.py upgrade preview
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import requests
+import json
+import os
+import uuid
+import time
+import subprocess
+import tempfile
+import re
+import chromadb
+from chromadb.config import Settings
+from sentence_transformers import SentenceTransformer
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ===================== RAG MEMORY (ChromaDB) =====================
+# Persist to a folder next to main.py
+CHROMA_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
+_chroma_client = None
+_chroma_col = None
+_embed_model = None
+
+def get_chroma():
+    global _chroma_client, _chroma_col
+    if _chroma_col is None:
+        _chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+        _chroma_col = _chroma_client.get_or_create_collection("anya_memory")
+    return _chroma_col
+
+def get_embed():
+    global _embed_model
+    if _embed_model is None:
+        print("Loading sentence-transformers model (first-time download)...")
+        _embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+        print("Model loaded.")
+    return _embed_model
+
+
+# ===================== MODELS =====================
+class Prompt(BaseModel):
+    message: str
+    system_prompt: str = ""
+    history: str = ""
+
+class MemoryItem(BaseModel):
+    id: str
+    text: str
+    type: str = "note"
+
+class MemoryQuery(BaseModel):
+    query: str
+    top_k: int = 4
+
+class MemoryDelete(BaseModel):
+    id: str
+
+class CodeRequest(BaseModel):
+    code: str
+    language: str = "python"
+
+
+# ===================== /ask =====================
+@app.post("/ask")
+def ask_ai(prompt: Prompt):
+    full_prompt = f"""{prompt.system_prompt}
+
+Conversation History:
+{prompt.history}
+
+User: {prompt.message}
+Assistant:
+"""
+    t_start = time.time()
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": "llama3:8b", "prompt": full_prompt, "stream": False},
+            timeout=120
+        )
+        t_end = time.time()
+        data = response.json()
+        content = data.get("response", "").strip()
+
+        eval_count        = data.get("eval_count", 0)
+        eval_duration_ns  = data.get("eval_duration", 1)
+        prompt_tokens     = data.get("prompt_eval_count", 0)
+        total_duration_ns = data.get("total_duration", 1)
+
+        eval_duration_s  = eval_duration_ns / 1e9
+        toks_per_sec     = round(eval_count / eval_duration_s, 1) if eval_duration_s > 0 else 0
+
+        return {
+            "response": content,
+            "stats": {
+                "output_tokens": eval_count,
+                "input_tokens":  prompt_tokens,
+                "total_tokens":  eval_count + prompt_tokens,
+                "tok_per_sec":   toks_per_sec,
+                "gen_time_s":    round(eval_duration_s, 2),
+                "total_time_s":  round(total_duration_ns / 1e9, 2),
+                "wall_time_s":   round(t_end - t_start, 2),
+                "verdict":       "done"
+            }
+        }
+    except Exception as e:
+        return {"response": "Error: AI service unavailable.", "stats": {"verdict": "error"}}
+
+
+# ===================== /memory/embed =====================
+@app.post("/memory/embed")
+def embed_memory(item: MemoryItem):
+    try:
+        col = get_chroma()
+        model = get_embed()
+        embedding = model.encode(item.text).tolist()
+        col.upsert(
+            ids=[item.id],
+            documents=[item.text],
+            embeddings=[embedding],
+            metadatas=[{"type": item.type}]
+        )
+        return {"success": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ===================== /memory/query =====================
+@app.post("/memory/query")
+def query_memory(body: MemoryQuery):
+    try:
+        col = get_chroma()
+        model = get_embed()
+        # Return empty if collection is empty
+        if col.count() == 0:
+            return {"results": []}
+        embedding = model.encode(body.query).tolist()
+        k = min(body.top_k, col.count())
+        res = col.query(query_embeddings=[embedding], n_results=k, include=["documents", "metadatas", "distances"])
+        results = []
+        for doc, meta, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
+            # Only include if similarity is decent (distance < 1.5 in cosine space)
+            if dist < 1.5:
+                results.append({"text": doc, "type": meta.get("type", "note"), "distance": round(dist, 3)})
+        return {"results": results}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ===================== /memory/delete =====================
+@app.delete("/memory/item")
+def delete_memory(body: MemoryDelete):
+    try:
+        col = get_chroma()
+        col.delete(ids=[body.id])
+        return {"success": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ===================== /run-code =====================
+BLOCKED_IMPORTS = {"os", "sys", "subprocess", "socket", "shutil", "importlib", "ctypes", "multiprocessing"}
+
+@app.post("/run-code")
+def run_code(body: CodeRequest):
+    if body.language != "python":
+        return JSONResponse(status_code=400, content={"error": "Only Python is supported."})
+
+    code = body.code
+
+    # Check for blocked imports
+    import_pattern = re.findall(r"^\s*(?:import|from)\s+(\w+)", code, re.MULTILINE)
+    for mod in import_pattern:
+        if mod in BLOCKED_IMPORTS:
+            return {
+                "stdout": "",
+                "stderr": f"❌ Blocked: import '{mod}' is not allowed for security reasons.",
+                "exit_code": 1,
+                "duration_ms": 0,
+                "blocked": True
+            }
+
+    # Mock input to prevent EOFError in non-interactive background execution
+    mock_input = (
+        "import builtins\n"
+        "def _mock_input(prompt=''):\n"
+        "    print(prompt + '42')\n"
+        "    return '42'\n"
+        "builtins.input = _mock_input\n\n"
+    )
+    code = mock_input + code
+
+    # Write to temp file and execute
+    tmp = tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False, encoding="utf-8")
+    try:
+        tmp.write(code)
+        tmp.close()
+
+        t0 = time.time()
+        result = subprocess.run(
+            ["python", tmp.name],
+            capture_output=True,
+            text=True,
+            input="",
+            timeout=5
+        )
+        duration_ms = round((time.time() - t0) * 1000)
+
+        return {
+            "stdout": result.stdout[:4000],   # cap output
+            "stderr": result.stderr[:2000],
+            "exit_code": result.returncode,
+            "duration_ms": duration_ms,
+            "blocked": False
+        }
+    except subprocess.TimeoutExpired:
+        return {"stdout": "", "stderr": "⏱ Execution timed out (5s limit).", "exit_code": 1, "duration_ms": 5000, "blocked": False}
+    except Exception as e:
+        return {"stdout": "", "stderr": str(e), "exit_code": 1, "duration_ms": 0, "blocked": False}
+    finally:
+        os.unlink(tmp.name)

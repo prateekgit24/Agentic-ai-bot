@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Clock Dashboard</title>
+    <style>
+        body {
+            background: #0f172a;
+            color: white;
+            font-family: Arial;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .container {
+            background: #1e293b;
+            padding: 40px;
+            border-radius: 20px;
+            width: 400px;
+            text-align: center;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+        }
+
+        .timer-display {
+            font-size: 48px;
+            margin: 20px 0;
+        }
+
+        input {
+            width: 60px;
+            padding: 10px;
+            margin: 5px;
+            text-align: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            background: #38bdf8;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0ea5e9;
+        }
+
+        .status {
+            margin-top: 15px;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>⏱ Timer</h1>
+
+    <div class="timer-display" id="timer-display">
+        00:00:00
+    </div>
+
+    <div>
+        <input type="number" id="h" placeholder="HH" min="0">
+        <input type="number" id="m" placeholder="MM" min="0">
+        <input type="number" id="s" placeholder="SS" min="0">
+    </div>
+
+    <div>
+        <button onclick="startTimer()">Start</button>
+        <button onclick="stopTimer()">Stop</button>
+        <button onclick="resetTimer()">Reset</button>
+    </div>
+
+    <div class="status" id="status-text">
+        Timer Idle
+    </div>
+</div>
+
+<script>
+async function startTimer() {
+    const h = parseInt(document.getElementById("h").value) || 0;
+    const m = parseInt(document.getElementById("m").value) || 0;
+    const s = parseInt(document.getElementById("s").value) || 0;
+
+    const duration = h * 3600 + m * 60 + s;
+    if (duration <= 0) return;
+
+    await fetch("http://localhost:6500/timer/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duration })
+    });
+}
+
+async function stopTimer() {
+    await fetch("http://localhost:6500/timer/stop", {
+        method: "POST"
+    });
+}
+
+async function resetTimer() {
+    await fetch("http://localhost:6500/timer/reset", {
+        method: "POST"
+    });
+}
+
+function formatTime(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+
+    return `${h.toString().padStart(2, '0')}:` +
+           `${m.toString().padStart(2, '0')}:` +
+           `${s.toString().padStart(2, '0')}`;
+}
+
+async function fetchStatus() {
+    try {
+        const res = await fetch("http://localhost:6500/timer/status");
+        const data = await res.json();
+
+        document.getElementById("timer-display").innerText =
+            formatTime(data.remaining || 0);
+
+        if (data.running) {
+            document.getElementById("status-text").innerText = "Running...";
+        } else if (data.remaining === 0 && data.duration > 0) {
+            document.getElementById("status-text").innerText = "Finished!";
+        } else {
+            document.getElementById("status-text").innerText = "Timer Idle";
+        }
+
+    } catch (e) {
+        document.getElementById("status-text").innerText = "Clock Service Offline";
+    }
+}
+
+setInterval(fetchStatus, 1000);
+fetchStatus();
+</script>
+
+</body>
+</html>

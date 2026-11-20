@@ -1,0 +1,356 @@
+PROJECT: Anya AI — Full-stack personal AI assistant
+ROOT: e:\aibot\beforefinal\my-ai-app\
+
+STACK:
+- Frontend: plain HTML/JS/CSS (no framework, no bundler)
+    frontend/index.html       (~970 lines)  — single page app, all modals inline
+    frontend/script.js        (~2950 lines) — all chat, tool, auth logic
+    frontend/style.css        (~3900 lines) — all styles
+    frontend/voice.js         (~380 lines)  — STT, TTS, wake word
+    frontend/modern-effects.css             — futuristic theme CSS
+    frontend/modern-effects.js              — canvas BG, cursor trail, click ripples
+- Node server: Express.js port 5000
+    node-server/server.js     (~1121 lines) — all routes: auth, chat, sessions, workspace
+    node-server/prompts.js                  — system prompt + tool definitions
+    node-server/services/tools/             — individual tool files
+        toolRegistry.js                     — maps tool name strings to handler functions
+        unitConverterTool.js   ✅ backend done
+        newsFeedTool.js        ✅ backend done (BBC RSS, no API key)
+        fileManagerTool.js     ✅ backend done
+- FastAPI: Python port 8000
+    fastapi-ai/main.py        — Ollama proxy, streaming NDJSON, /chat + /chat/stream
+- DB: MongoDB Atlas via Mongoose
+    node-server/models/       — User, Session, Message, Assistant, OTPToken schemas
+
+THEMES: 4 styles set via body class
+    body.style-default     — standard clean UI
+    body.style-minimalist  — flat borders, no animations
+    body.style-ancient     — terminal/CRT green phosphor
+    body.style-modern      — futuristic canvas BG, particle effects
+
+AUTH: JWT + Google OAuth + OTP email
+TOOLS: web_search, run_code, clock, alarm, stopwatch, notes,
+       netspeed, convert_units, get_news, file_manager
+
+COMPLETED RECENTLY:
+✅ Streaming blank box fix (lazy bubble creation)
+✅ JSON tool token suppression during streaming
+✅ Streaming on/off toggle
+✅ Tool + conversational message (tool_message field)
+✅ Theme cursor bleed fixed (scoped per theme)
+✅ Futuristic modern-effects.js uncommented (canvas, particles)
+✅ Wake word: Speech API fallback when Porcupine key expired/banned
+✅ AI thinking <think>...</think> — collapsible box, live during stream
+✅ HTML Canvas preview — sandboxed iframe tool panel, auto-detect
+✅ Pre-commit git hook blocks .env commits
+✅ Backend for unit converter, news feed, file manager tools
+
+================================================================
+PENDING TASKS (do in this order):
+================================================================
+
+──────────────────────────────────────────────
+TASK A (URGENT FIRST): Frontend UI for 3 backend tools
+──────────────────────────────────────────────
+Backend exists but frontend rendering is missing.
+handleJSONResponse() in script.js has no cases for these UIs yet.
+
+Pattern to follow: look at openCodeResult() and openSearchResults()
+in script.js (~line 2450+) — they create a .tool-window div with
+header (minimize/close buttons) and body, appended to #tool-container,
+then call toggleRightSidebar(true).
+
+Tool 1: unit-converter-card
+  Backend returns:
+    { type:"tool_result", tool:"convert_units", ui:"unit-converter-card",
+      data:{ value, from, to, result, category,
+             allConversions:[{unit,value,symbol},...],
+             units:[...] } }
+  Need in script.js:
+    - Case in handleJSONResponse: data.ui === "unit-converter-card"
+      → setText(`📐 ${data.data.value} ${data.data.from} = ${data.data.result} ${data.data.to}`)
+      → call openUnitConverter(data.data)
+    - function openUnitConverter(d) — tool window showing:
+        • Big result display: "1 km = 1000 m"
+        • Grid of all conversions in the category (allConversions array)
+        • Each row: unit name, converted value, symbol
+  CSS: .uc-result (big display), .uc-grid (2-col grid), .uc-row
+
+Tool 2: news-card
+  Backend returns:
+    { type:"tool_result", tool:"get_news", ui:"news-card",
+      data:{ category, categoryLabel, source, fetchedAt,
+             articles:[{title,description,link,pubDate},...] } }
+  Need in script.js:
+    - Case: data.ui === "news-card"
+      → setText(`📰 ${data.data.articles.length} articles — ${data.data.categoryLabel}`)
+      → call openNewsFeed(data.data)
+    - function openNewsFeed(d) — tool window showing:
+        • Header: source + category label + timestamp
+        • Scrollable list of articles
+        • Each article: title (bold, clickable → link), description (small), date
+  CSS: .news-article-item, .news-title (clickable), .news-desc, .news-meta
+
+Tool 3: file-manager-card
+  Backend returns:
+    { type:"tool_result", tool:"file_manager", ui:"file-manager-card",
+      data:{ files:[{name,sizeHuman,modified,icon,type,lang},...],
+             total, workspacePath, action?, fileName?, content? } }
+  Workspace routes already exist on node server:
+    GET  /workspace/files
+    GET  /workspace/file/:name  (download)
+    DELETE /workspace/file/:name
+  Need in script.js:
+    - Case: data.ui === "file-manager-card"
+      → setText(`📁 ${data.data.total} files in workspace`)
+      → call openFileManager(data.data)
+    - function openFileManager(d) — tool window showing:
+        • File list: icon + name + size + modified date
+        • Each file has: [View] button (fetch /workspace/file/:name and show in modal)
+                         [Delete] button (DELETE /workspace/file/:name, refresh list)
+        • If data.content present (read action): show content in <pre>
+        • If data.action === "create"/"write": show success message
+  CSS: .fm-file-row, .fm-icon, .fm-name, .fm-meta, .fm-actions
+
+Add all CSS at bottom of style.css (before scrollbar section).
+handleJSONResponse cases go in the existing if-block around line 415
+(after the code-result-card case, before the fallback renderToolUI call).
+Functions go after openCodeResult() function (~line 2500).
+
+──────────────────────────────────────────────
+TASK 4: Futuristic Theme Cursor + Chat Effects
+──────────────────────────────────────────────
+File: frontend/modern-effects.css
+File: frontend/modern-effects.js
+
+CURSORS (body.style-modern only):
+  Default arrow → triangle SVG cursor
+  Text cursor (input/textarea) → vertical rectangle instead of I-beam
+  Pointer (buttons/links) → circular cursor (already partially done)
+
+SVG cursors as data URLs in modern-effects.css:
+  Triangle (14×14 SVG, filled cyan/white, pointing right):
+    body.style-modern { cursor: url("data:image/svg+xml,...") 2 2, default; }
+  Vertical rect (6×16 SVG, thin glowing rectangle):
+    body.style-modern input, body.style-modern textarea {
+        cursor: url("data:image/svg+xml,...") 3 8, text; }
+  Circle (20×20 SVG, ring with glow):
+    body.style-modern button, body.style-modern a, body.style-modern [onclick] {
+        cursor: url("data:image/svg+xml,...") 10 10, pointer; }
+
+BACKGROUND EFFECTS in modern-effects.js:
+  Currently: canvas with stars + network nodes + particle bursts on click
+  ADD: sine wave curves that move slowly across the full background canvas
+    ctx.beginPath(); and bezierCurveTo with offset driven by sin(Date.now()/2000)
+    3-4 overlapping waves, low opacity (0.04-0.08), color: accent cyan/purple
+
+CHAT AREA FALLING LINES (scoped to #chat-box only):
+  Create a SEPARATE small canvas appended to #chat-box:
+    const chatCanvas = document.createElement("canvas");
+    chatCanvas.style = "position:absolute;top:0;left:0;width:100%;height:100%;
+                        pointer-events:none;opacity:0.07;z-index:0;";
+    document.getElementById("chat-box").style.position = "relative";
+    document.getElementById("chat-box").appendChild(chatCanvas);
+  Draw: array of horizontal lines at different Y positions, falling down slowly
+  Each line: random width (40-120px), x position, falling speed (0.3-1px/frame)
+  When line exits bottom, reset to random X at top
+  ~15-20 lines total. Only animate when body.style-modern is active.
+  Use MutationObserver (already in modern-effects.js) to start/stop.
+
+──────────────────────────────────────────────
+TASK 5: Large File Splitting
+──────────────────────────────────────────────
+Priority order: server.js first (easiest), then script.js, leave index.html
+
+server.js → split into route files (all in node-server/routes/):
+  routes/auth.js      ← POST /api/auth/register, /login, /google, /verify-otp,
+                         /resend-otp, POST /api/auth/change-password
+  routes/profile.js   ← GET/PATCH /api/profile, /api/profile/permissions (future)
+  routes/chat.js      ← POST /chat, /chat/stream
+  routes/sessions.js  ← GET /sessions, GET/DELETE /session/:id, POST /session/new
+  routes/workspace.js ← GET /workspace/files, GET /workspace/file/:name,
+                         DELETE /workspace/file/:name
+  routes/config.js    ← GET /config/voice, GET /config/assistant
+  server.js keeps: express setup, DB connect, middleware, app.use() routing, listen()
+  Each route file: const router = require("express").Router(); ... module.exports = router;
+
+script.js → split into <script> tag files (all in frontend/):
+  tools-widgets.js    ← openUnitConverter, openNewsFeed, openFileManager,
+                         openCodeResult, openSearchResults, openHTMLPreview,
+                         handleJSONResponse, renderToolUI, renderWithThinking,
+                         createThinkingBlock, maybeAttachPreviewButton
+  tools-clock.js      ← openClockTool, openAlarmTool, openStopwatchTool,
+                         openNetSpeedTool (everything in the clock/timer section)
+  tools-notes.js      ← notesStore, openNotesTool, renderNotesList
+  auth.js             ← anyaAuthToken, anyaUser, updateAuthUI, showLoginModal,
+                         handleGoogleCallback, handleLogout, handleOTP, etc.
+  themes.js           ← setThemeMode, setTheme, setStyle, loadSavedTheme,
+                         initResizeSidebars, toggleCanvasMode, initCanvasMode
+  script.js keeps:    ← sendMessage, appendChatMessage, streamChat, quickSend,
+                         scrollToBottom, showTypingIndicator, formatTime, etc.
+  Load order in index.html:
+    <script src="tools-clock.js"></script>
+    <script src="tools-notes.js"></script>
+    <script src="tools-widgets.js"></script>
+    <script src="auth.js"></script>
+    <script src="themes.js"></script>
+    <script src="script.js"></script>  ← last
+
+──────────────────────────────────────────────
+TASK 6: Permissions System
+──────────────────────────────────────────────
+Goal: per-user toggles for which tools they can use, stored in DB, 
+      enforced server-side before tool execution.
+
+Step 1 — DB Schema (node-server/models/User.js):
+  Add to UserSchema:
+    permissions: {
+      canWebSearch:   { type: Boolean, default: true },
+      canRunCode:     { type: Boolean, default: true },
+      canCreateFiles: { type: Boolean, default: true },
+      canSetAlarms:   { type: Boolean, default: true },
+      canPlayMusic:   { type: Boolean, default: true },
+      canGetNews:     { type: Boolean, default: true },
+    }
+
+Step 2 — Server enforcement (node-server/server.js, in /chat endpoint):
+  After parsing tool JSON, before calling toolFunction:
+    const permMap = {
+      web_search: "canWebSearch", run_code: "canRunCode",
+      file_manager: "canCreateFiles", alarm: "canSetAlarms",
+      get_news: "canGetNews"
+    };
+    const requiredPerm = permMap[parsed.tool];
+    if (requiredPerm && req.user && req.user.permissions) {
+      if (!req.user.permissions[requiredPerm]) {
+        return res.json({ type:"tool_result", tool:parsed.tool, ui:null,
+          error:"Tool disabled by your permissions." });
+      }
+    }
+  Apply same check in /chat/stream endpoint.
+
+Step 3 — API route (node-server/server.js or routes/profile.js):
+  PATCH /api/profile/permissions
+    body: { canWebSearch: bool, canRunCode: bool, ... }
+    req.user.permissions = { ...req.user.permissions, ...req.body }
+    await req.user.save()
+    res.json({ ok: true })
+
+Step 4 — Frontend UI (index.html + script.js):
+  Add "Permissions" settings panel in sidebar (there's already a Permissions
+  button — check index.html for id="panel-permissions" or similar).
+  Panel has toggle rows for each permission.
+  On change: fetch PATCH /api/profile/permissions with updated values.
+  On settings open: fetch GET /api/profile to load current permissions,
+    populate toggles.
+
+──────────────────────────────────────────────
+TASK 7: Vision Tools (Image + File Reading)
+──────────────────────────────────────────────
+Two separate features:
+
+FEATURE A — Image input (multimodal):
+  Requires: Ollama model that supports vision (llava, moondream, gemma3, etc.)
+  
+  Frontend (index.html + script.js):
+    Add image attach button next to mic button in chat input area:
+      <button id="attach-btn" onclick="openAttachPicker()">📎</button>
+      <input type="file" id="img-file-input" accept="image/*" style="display:none"
+             onchange="handleImageAttach(this)">
+    Show thumbnail preview above input when image selected.
+    Store as base64 in variable: let attachedImage = null;
+    In sendMessage(): if attachedImage, send as multipart or JSON with images array.
+  
+  Node server (server.js /chat endpoint):
+    Accept req.body.images array (base64 strings).
+    Forward to FastAPI: { message, images, ... }
+  
+  FastAPI (fastapi-ai/main.py):
+    If images in request body:
+      messages[-1]["images"] = images  ← Ollama accepts base64 in images field
+    Works with llava/moondream models out of the box.
+
+FEATURE B — File reading (PDF, DOCX, TXT):
+  New tool: read_file — user uploads or references file, AI reads text content.
+  
+  Frontend: file picker in chat bar (separate from image, accepts .pdf/.docx/.txt)
+  Node server: 
+    POST /upload endpoint using multer (already installed? check package.json)
+    Extract text: pdf → pdfplumber via python script, docx → mammoth npm package
+    Or: POST the file to FastAPI which uses pdfplumber/python-docx
+  Returns extracted text → injected as context before the user message.
+
+──────────────────────────────────────────────
+TASK 8: 2D/3D Character Avatar (Live2D recommended)
+──────────────────────────────────────────────
+Recommended approach: Live2D Cubism Web (free runtime + free sample models)
+
+Files needed:
+  - live2dcubismcore.min.js (from pixi-live2d-display or official SDK)
+  - pixi.min.js (PixiJS renderer)
+  - PIXI.live2d extension
+  - A .moc3 model file (free samples from live2d.com/en/learn/sample/)
+
+Implementation plan:
+  1. Add avatar panel to index.html:
+       <div id="avatar-panel" class="avatar-panel collapsed">
+           <div class="avatar-header">
+               <button onclick="toggleAvatar()">✦ Anya</button>
+           </div>
+           <canvas id="avatar-canvas" width="300" height="400"></canvas>
+       </div>
+  
+  2. Create frontend/avatar.js:
+       Load PixiJS + live2d libs from CDN or local files
+       Init PIXI Application on #avatar-canvas
+       Load .moc3 model
+       Set up expressions: idle, talk, happy, surprised
+       Detect AI is responding → trigger "talk" animation
+       On canvas click → trigger "surprised" or wave gesture
+       Idle: random blink + slight body breathing animation
+  
+  3. Connect to chat events (in script.js):
+       When AI starts typing: avatarSetState("talk")
+       When AI done: avatarSetState("idle")  
+       On error: avatarSetState("worried")
+  
+  4. Avatar panel: position fixed bottom-right, minimizable
+       Minimized: just shows small face icon
+       Expanded: 300×400 canvas panel
+
+Alternative if Live2D is too heavy:
+  CSS/SVG animated character — simple face with CSS animations for talking,
+  blinking, head tilt. Much lighter (~10KB vs ~5MB model).
+
+──────────────────────────────────────────────
+ALSO PENDING (from even earlier session): not to be done now its in later phase
+──────────────────────────────────────────────
+TASK TF.js Wake Word (optional, deferred):
+  Replace Porcupine with offline TF.js transfer learning wake word detector.
+  User records 20 samples of "Hey Anya" once in settings → trains in browser →
+  saves to IndexedDB → used permanently offline.
+  Library: @tensorflow-models/speech-commands (CDN, ~5MB)
+  Add "Train Wake Word" section in Voice settings panel.
+
+================================================================
+IMPORTANT CONTEXT NOTES FOR NEW SESSION:
+================================================================
+- All files use plain JS globals (no ES modules, no import/export)
+- Scripts all in <script src="..."> tags in index.html, order matters
+- CSS variables: --accent-primary, --text-secondary, --border-subtle, etc.
+  defined in :root and overridden per theme
+- Tool windows: always create a .tool-window div with .tool-window-header,
+  append to #tool-container, call toggleRightSidebar(true)
+- Minimize pattern: minimizeTool(toolWindow, "emoji", "tool_id")
+- appendChatMessage(role, text, time) returns the wrapper div
+- The .content child holds the message text, .timestamp holds time
+- handleJSONResponse(data, aiContent, aiTime) routes tool results to UI functions
+- renderWithThinking(text, aiMessage, aiContent) handles <think> tags
+- maybeAttachPreviewButton(text, bubbleEl) adds HTML preview button
+- Server runs on port 5000 (Node) and 8000 (FastAPI/Python)
+- Frontend served by Node server at http://localhost:5000
+- MongoDB connection string in node-server/.env
+- Streaming: SSE via EventSource-like fetch, NDJSON from FastAPI, 
+  re-emitted as SSE by Node proxy
+- .env is in .gitignore + pre-commit hook blocks it
+- Current git branch: master (main branch for PRs is main)
